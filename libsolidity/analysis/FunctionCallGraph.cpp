@@ -197,7 +197,7 @@ bool FunctionCallGraphBuilder::visit(MemberAccess const& _memberAccess)
 		))
 		{
 			ContractType const& accessedContractType = dynamic_cast<ContractType const&>(*magicType->typeArgument());
-			m_graph.createdContracts.emplace(&accessedContractType, &_memberAccess);
+			m_graph.createdContracts.emplace(&accessedContractType.contractDefinition(), &_memberAccess);
 		}
 
 	return true;
@@ -224,7 +224,7 @@ bool FunctionCallGraphBuilder::visit(ModifierInvocation const& _modifierInvocati
 bool FunctionCallGraphBuilder::visit(NewExpression const& _newExpression)
 {
 	if (ContractType const* contractType = dynamic_cast<ContractType const*>(_newExpression.typeName().annotation().type))
-		m_graph.createdContracts.emplace(&contractType->contractDefinition());
+		m_graph.createdContracts.emplace(&contractType->contractDefinition(), &_newExpression);
 
 	return true;
 }

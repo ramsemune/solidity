@@ -19,6 +19,7 @@
 #include <libsolidity/analysis/PostTypeChecker.h>
 
 #include <libsolidity/ast/AST.h>
+#include <libsolidity/ast/CallGraph.h>
 #include <libsolidity/interface/Version.h>
 #include <liblangutil/ErrorReporter.h>
 #include <liblangutil/SemVerHandler.h>
@@ -26,6 +27,7 @@
 
 #include <boost/range/adaptor/map.hpp>
 #include <memory>
+#include <set>
 
 using namespace std;
 using namespace solidity;

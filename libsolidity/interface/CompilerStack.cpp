@@ -70,11 +70,14 @@
 #include <libsolutil/SwarmHash.h>
 #include <libsolutil/IpfsHash.h>
 #include <libsolutil/JSON.h>
+#include <libsolutil/Algorithms.h>
 
 #include <json/json.h>
 
 #include <boost/algorithm/string/replace.hpp>
 #include <utility>
+#include <map>
+#include <range/v3/view/concat.hpp>
 
 using namespace std;
 using namespace solidity;
@@ -101,6 +104,32 @@ CompilerStack::~CompilerStack()
 {
 	--g_compilerStackCounts;
 	TypeProvider::reset();
+}
+
+void CompilerStack::createAndAssignCallGraphs(ContractDefinition const& _contract)
+{
+	Contract& contractState = m_contracts.at(_contract.fullyQualifiedName());
+
+	contractState.contract->annotation().creationCallGraph = make_unique<CallGraph>(
+		FunctionCallGraphBuilder::buildCreationGraph(
+			_contract
+		)
+	);
+	contractState.contract->annotation().deployedCallGraph = make_unique<CallGraph>(
+		FunctionCallGraphBuilder::buildDeployedGraph(
+			_contract,
+			**contractState.contract->annotation().creationCallGraph
+		)
+	);
+
+	auto createdContracts = ranges::views::concat(
+		_contract.annotation().creationCallGraph->get()->createdContracts,
+		_contract.annotation().deployedCallGraph->get()->createdContracts
+	);
+
+	for (auto const& [dependencyContract, referencee]: createdContracts)
+		if (dependencyContract != &_contract)
+			contractState.contract->annotation().contractDependencies.emplace(dependencyContract, referencee);
 }
 
 std::optional<CompilerStack::Remapping> CompilerStack::parseRemapping(string const& _remapping)
@@ -399,27 +428,44 @@ bool CompilerStack::analyze()
 			if (source->ast && !typeChecker.checkTypeRequirements(*source->ast))
 				noErrors = false;
 
+		// Create & assign callgraphs and check for contract dependency cycles
 		if (noErrors)
 		{
+			// Cycles we found, used to avoid duplicate reports for the same dependency
+			map<ContractDefinition const*, ASTNode const*, ASTNode::CompareByID> foundCycles;
+			util::CycleDetector<ContractDefinition> cycleDetector{[&](ContractDefinition const& _contract, util::CycleDetector<ContractDefinition>& _cycleDetector, size_t _depth)
+			{
+				if (_depth >= MaxCycleDetectionRecursionDepth)
+					m_errorReporter.fatalTypeError(7864_error, _contract.location(), "Contract dependencies exhausting cyclic dependency validator");
+
+				for (auto& [dependencyContract, referencee]: _contract.annotation().contractDependencies)
+					if (_cycleDetector.run(*dependencyContract))
+						return;
+			}};
+
 			for (Source const* source: m_sourceOrder)
 				if (source->ast)
 					for (ASTPointer<ASTNode> const& node: source->ast->nodes())
 						if (auto const* contractDefinition = dynamic_cast<ContractDefinition*>(node.get()))
 						{
-							Contract& contractState = m_contracts.at(contractDefinition->fullyQualifiedName());
-
-							contractState.contract->annotation().creationCallGraph = make_unique<CallGraph>(
-								FunctionCallGraphBuilder::buildCreationGraph(
-									*contractDefinition
-								)
-							);
-							contractState.contract->annotation().deployedCallGraph = make_unique<CallGraph>(
-								FunctionCallGraphBuilder::buildDeployedGraph(
-									*contractDefinition,
-									**contractState.contract->annotation().creationCallGraph
-								)
-							);
+							createAndAssignCallGraphs(*contractDefinition);
+							ContractDefinition const* cycleContract = cycleDetector.run(*contractDefinition);
+							if (cycleContract)
+								foundCycles.emplace(cycleContract, contractDefinition->annotation().contractDependencies[cycleContract]);
 						}
+
+			for (auto const& [cycle, referencee]: foundCycles)
+			{
+				SecondarySourceLocation secondaryLocation{};
+				secondaryLocation.append("Referenced contract"s, cycle->location());
+
+				m_errorReporter.typeError(
+					7813_error,
+					referencee->location(),
+					secondaryLocation,
+					"Circular reference found."
+				);
+			}
 		}
 
 		if (noErrors)
@@ -1200,7 +1246,7 @@ void CompilerStack::compileContract(
 	if (_otherCompilers.count(&_contract))
 		return;
 
-	for (auto const* dependency: _contract.annotation().contractDependencies)
+	for (auto const& [dependency, referencee]: _contract.annotation().contractDependencies)
 		compileContract(*dependency, _otherCompilers);
 
 	if (!_contract.canBeDeployed())
@@ -1286,7 +1332,7 @@ void CompilerStack::generateIR(ContractDefinition const& _contract)
 		);
 
 	string dependenciesSource;
-	for (auto const* dependency: _contract.annotation().contractDependencies)
+	for (auto const& [dependency, referencee]: _contract.annotation().contractDependencies)
 		generateIR(*dependency);
 
 	if (!_contract.canBeDeployed())
