@@ -35,6 +35,7 @@ Bugfixes:
  * SMTChecker: Fix missing type constraints on block and transaction variables in the deployment phase.
  * Type Checker: Fix internal error when override specifier is not a contract.
  * Type Checker: Make function-hash collision errors into fatal type errors.
+ * Natspec: Fix internal error when base functions has more return parameters.
 
 
 AST Changes:
