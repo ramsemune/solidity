@@ -180,13 +180,6 @@ set(yul_phaser_sources
 )
 detect_stray_source_files("${yul_phaser_sources}" "yulPhaser/")
 
-if(SOLIDITY_LANGUAGE_SERVER)
-	set(lsp_sources
-		lsp/VFS_test.cpp
-	)
-	detect_stray_source_files("${lsp_sources}" "lsp/")
-endif()
-
 add_executable(soltest ${sources}
     ${contracts_sources}
     ${libsolutil_sources}

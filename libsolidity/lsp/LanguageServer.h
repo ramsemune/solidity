@@ -22,7 +22,6 @@
 #include <libsolidity/lsp/LSPTypes.h>
 #include <libsolidity/lsp/ReferenceCollector.h>
 #include <libsolidity/lsp/Transport.h>
-#include <libsolidity/lsp/VFS.h>
 
 #include <libsolidity/ast/AST.h>
 
@@ -67,8 +66,7 @@ public:
 	/// performs a validation run.
 	///
 	/// update diagnostics and also pushes any updates to the client.
-	void validateAll();
-	void validate(vfs::File const& _file);
+	void validate(std::string const& _file);
 
 	/// Loops over incoming messages via the transport layer until shutdown condition is met.
 	///
@@ -97,8 +95,8 @@ protected:
 	// {{{ Client-to-Server messages
 	/// Invoked when the server user-supplied configuration changes (initiated by the client).
 	void changeConfiguration(Json::Value const&);
-	void documentContentUpdated(std::string const& _path, std::optional<int> _documentVersion, std::string const& _fullContentChange);
-	void documentContentUpdated(std::string const& _path, std::optional<int> _version, LineColumnRange _range, std::string const& _text);
+	void documentContentUpdated(std::string const& _path, std::string const& _fullContentChange);
+	void documentContentUpdated(std::string const& _path, LineColumnRange _range, std::string const& _text);
 
 	/// Find all semantically equivalent occurrences of the symbol the current cursor is located at.
 	///
@@ -119,7 +117,7 @@ protected:
 
 	frontend::ReadCallback::Result readFile(std::string const&, std::string const&);
 
-	void compile(vfs::File const& _file);
+	bool compile(std::string const& _path);
 
 	frontend::ASTNode const* findASTNode(langutil::LineColumn _position, std::string const& _fileName);
 
@@ -150,10 +148,7 @@ protected:
 	std::function<void(std::string_view)> m_logger;
 	// }}}
 
-	/// In-memory filesystem for each opened file.
-	/// Closed files will not be removed as they may be needed for compiling.
-	vfs::VFS m_vfs;
-
+	/// FileReader is used for reading files during comilation phase but is also used as VFS for the LSP.
 	std::unique_ptr<FileReader> m_fileReader;
 
 	/// List of directories a file may be read from.
@@ -163,7 +158,9 @@ protected:
 	boost::filesystem::path m_basePath;
 
 	/// map of input files to source code strings
-	std::map<std::string, std::string> m_sourceCodes;
+	///
+	/// The key must be a fully qualified path to the file.
+	// TODO (dead) std::map<std::string, std::string> m_sourceCodes;
 
 	std::unique_ptr<frontend::CompilerStack> m_compilerStack;
 	std::vector<frontend::CompilerStack::Remapping> m_remappings;

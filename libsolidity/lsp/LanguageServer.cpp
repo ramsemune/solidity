@@ -149,8 +149,7 @@ LanguageServer::LanguageServer(Logger _logger, istream& _in, ostream& _out):
 		{"textDocument/documentHighlight", bind(&LanguageServer::handle_textDocument_highlight, this, _1, _2)},
 		{"textDocument/references", bind(&LanguageServer::handle_textDocument_references, this, _1, _2)},
 	},
-	m_logger{std::move(_logger)},
-	m_vfs()
+	m_logger{std::move(_logger)}
 {
 }
 
@@ -175,44 +174,65 @@ void LanguageServer::changeConfiguration(Json::Value const& _settings)
 	}
 }
 
-void LanguageServer::documentContentUpdated(string const& _path, std::optional<int> _version, LineColumnRange _range, std::string const& _text)
+namespace { // TODO: move us up!
+	inline size_t toOffset(std::string const& _text, langutil::LineColumn _position) noexcept
+	{
+		// TODO: take care of Unicode.
+		size_t offset = 0;
+		langutil::LineColumn current = {0, 0};
+		while (current != _position && offset < _text.size())
+		{
+			if (_text.at(offset) != '\n')
+				current.column++;
+			else
+			{
+				current.line++;
+				current.column = 0;
+			}
+			offset++;
+		}
+		return offset;
+	}
+
+	inline std::pair<size_t, size_t> offsetsOf(std::string const& _text, LineColumnRange _range) noexcept
+	{
+		return std::pair{
+			toOffset(_text, _range.start),
+			toOffset(_text, _range.end)
+		};
+	}
+}
+
+void LanguageServer::documentContentUpdated(string const& _path, LineColumnRange _range, string const& _replacementText)
 {
 	// TODO: all this info is actually unrelated to solidity/lsp specifically except knowing that
 	// the file has updated, so we can  abstract that away and only do the re-validation here.
-	auto file = m_vfs.find(_path);
-	if (!file)
+	auto file = m_fileReader->sourceCodes().find(_path);
+	if (file == m_fileReader->sourceCodes().end())
 	{
 		log("LanguageServer: File to be modified not opened \"" + _path + "\"");
 		return;
 	}
 
-	if (_version.has_value())
-		file->setVersion(_version.value());
+	auto& buffer = file->second;
 
-	file->modify(_range, _text);
+	auto const [start, end] = offsetsOf(buffer, _range);
+	buffer.replace(start, end - start, _replacementText);
+	buffer.replace(start, end - start, _replacementText);
 }
 
-void LanguageServer::documentContentUpdated(string const& _path, optional<int> _version, string const& _fullContentChange)
+void LanguageServer::documentContentUpdated(string const& _path, string const& _replacementText)
 {
-	auto file = m_vfs.find(_path);
-	if (!file)
+	auto file = m_fileReader->sourceCodes().find(_path);
+	if (file == m_fileReader->sourceCodes().end())
 	{
 		log("LanguageServer: File to be modified not opened \"" + _path + "\"");
 		return;
 	}
 
-	if (_version.has_value())
-		file->setVersion(_version.value());
+	file->second = _replacementText;
 
-	file->replace(_fullContentChange);
-
-	validate(*file);
-}
-
-void LanguageServer::validateAll()
-{
-	for (reference_wrapper<vfs::File const> const& file: m_vfs.files())
-		validate(file.get());
+	validate(_path);
 }
 
 frontend::ReadCallback::Result LanguageServer::readFile(string const& _kind, string const& _path)
@@ -240,16 +260,13 @@ constexpr DiagnosticSeverity toDiagnosticSeverity(Error::Type _errorType)
 	return Severity::Error;
 }
 
-void LanguageServer::compile(vfs::File const& _file)
+bool LanguageServer::compile(std::string const& _path)
 {
 	// TODO: optimize! do not recompile if nothing has changed (file(s) not flagged dirty).
 
-	// always start fresh when compiling
-	m_sourceCodes.clear();
-
-	m_sourceCodes[_file.path()] = _file.contentString();
-
-	m_fileReader = make_unique<FileReader>(m_basePath, m_allowedDirectories);
+	auto const i = m_fileReader->sourceCodes().find(_path);
+	if (i == m_fileReader->sourceCodes().end())
+		return false;
 
 	m_compilerStack.reset();
 	m_compilerStack = make_unique<CompilerStack>(bind(&FileReader::readFile, ref(*m_fileReader), _1, _2));
@@ -259,7 +276,7 @@ void LanguageServer::compile(vfs::File const& _file)
 	m_compilerStack->setOptimiserSettings(settings);
 	m_compilerStack->setParserErrorRecovery(false);
 	m_compilerStack->setRevertStringBehaviour(RevertStrings::Default); // TODO get from config
-	m_compilerStack->setSources(m_sourceCodes);
+	m_compilerStack->setSources(m_fileReader->sourceCodes());
 	m_compilerStack->setRemappings(m_remappings);
 
 	m_compilerStack->setEVMVersion(m_evmVersion);
@@ -267,16 +284,15 @@ void LanguageServer::compile(vfs::File const& _file)
 	trace("compile: using EVM "s + m_evmVersion.name());
 
 	m_compilerStack->compile(CompilerStack::State::AnalysisPerformed);
+	return true;
 }
 
-void LanguageServer::validate(vfs::File const& _file)
+void LanguageServer::validate(std::string const& _path)
 {
-	compile(_file);
+	compile(_path);
 
 	Json::Value params;
-	params["uri"] = toFileURI(_file.path());
-	if (_file.version())
-		params["version"] = _file.version();
+	params["uri"] = toFileURI(_path);
 
 	params["diagnostics"] = Json::arrayValue;
 	for (shared_ptr<Error const> const& error: m_compilerStack->errors())
@@ -400,19 +416,19 @@ void LanguageServer::findAllReferences(
 
 vector<SourceLocation> LanguageServer::references(DocumentPosition _documentPosition)
 {
-	auto const file = m_vfs.find(_documentPosition.path);
-	if (!file)
+	auto const file = m_fileReader->sourceCodes().find(_documentPosition.path);
+	if (file == m_fileReader->sourceCodes().end())
 	{
 		trace("File does not exist. " + _documentPosition.path);
 		return {};
 	}
 
 	if (!m_compilerStack)
-		compile(*file);
+		compile(_documentPosition.path);
 
 	solAssert(m_compilerStack.get() != nullptr, "");
 
-	auto const sourceName = file->path();
+	auto const& sourceName = _documentPosition.path;
 
 	auto const sourceNode = findASTNode(_documentPosition.position, sourceName);
 	if (!sourceNode)
@@ -472,17 +488,10 @@ vector<SourceLocation> LanguageServer::references(DocumentPosition _documentPosi
 
 vector<DocumentHighlight> LanguageServer::semanticHighlight(DocumentPosition _documentPosition)
 {
-	auto const file = m_vfs.find(_documentPosition.path);
-	if (!file)
-	{
-		trace("semanticHighlight: Could not map document path to file.");
-		return {};
-	}
-
 	solAssert(m_compilerStack.get() != nullptr, "");
 
-	auto const sourceName = file->path();
-	auto const sourceNode = findASTNode(_documentPosition.position, sourceName);
+	frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(_documentPosition.path);
+	ASTNode const* sourceNode = findASTNode(_documentPosition.position, _documentPosition.path);
 	if (!sourceNode)
 	{
 		trace("semanticHighlight: AST node not found");
@@ -497,9 +506,6 @@ vector<DocumentHighlight> LanguageServer::semanticHighlight(DocumentPosition _do
 	// TODO: ImportDirective: hovering a symbol of an import directive should highlight all uses of that symbol.
 	if (auto const* sourceIdentifier = dynamic_cast<Identifier const*>(sourceNode))
 	{
-		auto const sourceName = _documentPosition.path;
-		frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
-
 		vector<DocumentHighlight> output;
 		if (sourceIdentifier->annotation().referencedDeclaration)
 			output += ReferenceCollector::collect(sourceIdentifier->annotation().referencedDeclaration, sourceUnit, sourceIdentifier->name());
@@ -512,24 +518,15 @@ vector<DocumentHighlight> LanguageServer::semanticHighlight(DocumentPosition _do
 		return output;
 	}
 	else if (auto const* varDecl = dynamic_cast<VariableDeclaration const*>(sourceNode))
-	{
-		auto const sourceName = _documentPosition.path;
-		frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 		return ReferenceCollector::collect(varDecl, sourceUnit, varDecl->name());
-	}
 	else if (auto const* structDef = dynamic_cast<StructDefinition const*>(sourceNode))
-	{
-		frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 		return ReferenceCollector::collect(structDef, sourceUnit, structDef->name());
-	}
 	else if (auto const* memberAccess = dynamic_cast<MemberAccess const*>(sourceNode))
 	{
 		TypePointer const type = memberAccess->expression().annotation().type;
 		if (auto const ttype = dynamic_cast<TypeType const*>(type))
 		{
 			auto const memberName = memberAccess->memberName();
-			auto const sourceName = _documentPosition.path;
-			frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 
 			if (auto const* enumType = dynamic_cast<EnumType const*>(ttype->actualType()))
 			{
@@ -554,32 +551,20 @@ vector<DocumentHighlight> LanguageServer::semanticHighlight(DocumentPosition _do
 		//
 		// if (auto const tt = dynamic_cast<TypeType const*>(type))
 		// {
-		// 	auto const sourceName = _documentPosition.path;
-		// 	frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 		// 	output = findAllReferences(declaration, sourceUnit);
 		// }
 	}
 	else if (auto const* identifierPath = dynamic_cast<IdentifierPath const*>(sourceNode))
 	{
 		solAssert(!identifierPath->path().empty(), "");
-		frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 		return ReferenceCollector::collect(identifierPath->annotation().referencedDeclaration, sourceUnit, identifierPath->path().back());
 	}
 	else if (auto const* functionDefinition = dynamic_cast<FunctionDefinition const*>(sourceNode))
-	{
-		frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 		return ReferenceCollector::collect(functionDefinition, sourceUnit, functionDefinition->name());
-	}
 	else if (auto const* enumDef = dynamic_cast<EnumDefinition const*>(sourceNode))
-	{
-		frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 		return ReferenceCollector::collect(enumDef, sourceUnit, enumDef->name());
-	}
 	else if (auto const* importDef = dynamic_cast<ImportDirective const*>(sourceNode))
-	{
-		frontend::SourceUnit const& sourceUnit = m_compilerStack->ast(sourceName);
 		return ReferenceCollector::collect(importDef, sourceUnit, importDef->name());
-	}
 	else
 		trace("semanticHighlight: not an identifier. "s + typeid(*sourceNode).name());
 
@@ -614,6 +599,7 @@ bool LanguageServer::run()
 		return false;
 }
 
+#define MYDEBUG 0
 void LanguageServer::handle_initialize(MessageId _id, Json::Value const& _args)
 {
 	string rootPath;
@@ -635,7 +621,7 @@ void LanguageServer::handle_initialize(MessageId _id, Json::Value const& _args)
 			m_trace = Trace::Off;
 	}
 
-#if 0 // Currently not used.
+#if MYDEBUG // Currently not used.
 	// At least VScode supports more than one workspace.
 	// This is the list of initial configured workspace folders
 	struct WorkspaceFolder { std::string name; std::string path; };
@@ -656,6 +642,7 @@ void LanguageServer::handle_initialize(MessageId _id, Json::Value const& _args)
 
 	m_basePath = fspath;
 	m_allowedDirectories.push_back(fspath);
+	m_fileReader = make_unique<FileReader>(m_basePath, m_allowedDirectories);
 
 	if (_args["initializationOptions"].isObject())
 		changeConfiguration(_args["initializationOptions"]);
@@ -701,27 +688,23 @@ void LanguageServer::handle_textDocument_didOpen(MessageId /*_id*/, Json::Value 
 		return;
 
 	auto const path = extractPathFromFileURI(_args["textDocument"]["uri"].asString()).value();
-	auto const languageId = _args["textDocument"]["languageId"].asString();
-	auto const version = _args["textDocument"]["version"].asInt();
 	auto const text = _args["textDocument"]["text"].asString();
+	// auto const version = _args["textDocument"]["version"].asInt();
+	// auto const languageId = _args["textDocument"]["languageId"].asString();
 
 	log("LanguageServer: Opening document: " + path);
 
-	vfs::File const& file = m_vfs.insert(
-		path,
-		languageId,
-		version,
-		text
-	);
+	//m_vfs[path] = text;
+	m_fileReader->setSource(path, nullopt, text);
 
-	validate(file);
+	validate(path);
 
 	// no encoding
 }
 
 void LanguageServer::handle_textDocument_didChange(MessageId /*_id*/, Json::Value const& _args)
 {
-	auto const version = _args["textDocument"]["version"].asInt();
+	//auto const version = _args["textDocument"]["version"].asInt();
 	auto const path = extractPathFromFileURI(_args["textDocument"]["uri"].asString()).value();
 
 	// TODO: in the longer run, I'd like to try moving the VFS handling into Server class, so
@@ -745,23 +728,17 @@ void LanguageServer::handle_textDocument_didChange(MessageId /*_id*/, Json::Valu
 			range.end.line = jsonRange["end"]["line"].asInt();
 			range.end.column = jsonRange["end"]["character"].asInt();
 
-			documentContentUpdated(path, version, range, text);
+			documentContentUpdated(path, range, text);
 		}
 		else
 		{
 			// full content update
-			documentContentUpdated(path, version, text);
+			documentContentUpdated(path, text);
 		}
 	}
 
 	if (!contentChanges.empty())
-	{
-		auto file = m_vfs.find(path);
-		if (!file)
-			log("LanguageServer: File to be modified not opened \"" + path + "\"");
-		else
-			validate(*file);
-	}
+		validate(path);
 }
 
 void LanguageServer::handle_textDocument_definition(MessageId _id, Json::Value const& _args)
@@ -771,15 +748,15 @@ void LanguageServer::handle_textDocument_definition(MessageId _id, Json::Value c
 	// source should be compiled already
 	solAssert(m_compilerStack.get() != nullptr, "");
 
-	auto const file = m_vfs.find(dpos.path);
-	if (!file)
+	auto const file = m_fileReader->sourceCodes().find(dpos.path);
+	if (file == m_fileReader->sourceCodes().end())
 	{
 		Json::Value emptyResponse = Json::arrayValue;
 		m_client->reply(_id, emptyResponse);
 		return;
 	}
 
-	auto const sourceNode = findASTNode(dpos.position, file->path());
+	auto const sourceNode = findASTNode(dpos.position, dpos.path);
 	if (!sourceNode)
 	{
 		trace("gotoDefinition: AST node not found for "s + to_string(dpos.position.line) + ":" + to_string(dpos.position.column));
@@ -860,8 +837,8 @@ void LanguageServer::handle_textDocument_references(MessageId _id, Json::Value c
 		to_string(dpos.position.column)
 	);
 
-	vfs::File* const file = m_vfs.find(dpos.path);
-	if (!file)
+	auto file = m_fileReader->sourceCodes().find(dpos.path);
+	if (file == m_fileReader->sourceCodes().end())
 	{
 		Json::Value emptyResponse = Json::arrayValue;
 		m_client->reply(_id, emptyResponse); // reply with "No references".
@@ -869,7 +846,7 @@ void LanguageServer::handle_textDocument_references(MessageId _id, Json::Value c
 	}
 
 	if (!m_compilerStack)
-		compile(*file);
+		compile(dpos.path);
 	solAssert(m_compilerStack.get() != nullptr, "");
 
 	auto const sourceNode = findASTNode(dpos.position, dpos.path);
