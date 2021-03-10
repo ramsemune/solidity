@@ -41,14 +41,15 @@ to enable it via :ref:`a pragma directive<smt_checker>`.
 
 .. note::
   The lack of warnings for a verification target represents an undisputed
-  mathematical proof of correctness. Keep in mind that these problems are
+  mathematical proof of correctness, assuming no bugs in the SMTChecker and
+  underlying solver. Keep in mind that these problems are
   *very hard* and sometimes *impossible* to solve automatically in the
   general case.  Therefore, several properties might not be solved or might
   lead to false positives for large contracts. Every proven property should
   be seen as an important achievement. For advanced users, see :ref:`SMTChecker Tuning <smtchecker_options>`
   to learn a few options that might help proving more complex
   properties.
-  
+
 ********
 Tutorial
 ********
@@ -58,7 +59,9 @@ Overflow
 
 .. code-block:: Solidity
 
+    pragma solidity >=0.8.0;
     pragma experimental SMTChecker;
+    // This may report a warning if no SMT solver available.
 
     contract Overflow {
         uint immutable x;
@@ -88,7 +91,7 @@ Here, it reports the following:
     Counterexample:
     x = 1, y = 115792089237316195423570985008687907853269984665640564039457584007913129639935
      = 0
-    
+
     Transaction trace:
     Overflow.constructor(1, 115792089237316195423570985008687907853269984665640564039457584007913129639935)
     State: x = 1, y = 115792089237316195423570985008687907853269984665640564039457584007913129639935
@@ -104,7 +107,9 @@ the SMTChecker proves that no overflow is reachable (by not reporting warnings):
 
 .. code-block:: Solidity
 
+    pragma solidity >=0.8.0;
     pragma experimental SMTChecker;
+    // This may report a warning if no SMT solver available.
 
     contract Overflow {
         uint immutable x;
@@ -141,7 +146,9 @@ definition to see what results come out!
 
 .. code-block:: Solidity
 
+    pragma solidity >=0.8.0;
     pragma experimental SMTChecker;
+    // This may report a warning if no SMT solver available.
 
     contract Monotonic {
         function f(uint _x) internal pure returns (uint) {
@@ -162,21 +169,23 @@ equal every element in the array.
 
 .. code-block:: Solidity
 
-  pragma experimental SMTChecker;
+    pragma solidity >=0.8.0;
+    pragma experimental SMTChecker;
+    // This may report a warning if no SMT solver available.
 
-  contract Max {
-      function max(uint[] memory _a) public pure returns (uint) {
-          uint m = 0;
-          for (uint i = 0; i < _a.length; ++i)
-              if (_a[i] > m)
-                  m = _a[i];
+    contract Max {
+        function max(uint[] memory _a) public pure returns (uint) {
+            uint m = 0;
+            for (uint i = 0; i < _a.length; ++i)
+                if (_a[i] > m)
+                    m = _a[i];
 
-          for (uint i = 0; i < _a.length; ++i)
-              assert(m >= _a[i]);
+            for (uint i = 0; i < _a.length; ++i)
+                assert(m >= _a[i]);
 
-          return m;
-      }
-  }
+            return m;
+        }
+    }
 
 Note that in this example the SMTChecker will automatically try to prove three properties:
 
@@ -194,22 +203,24 @@ For example, changing the code to
 
 .. code-block:: Solidity
 
-  pragma experimental SMTChecker;
+    pragma solidity >=0.8.0;
+    pragma experimental SMTChecker;
+    // This may report a warning if no SMT solver available.
 
-  contract Max {
-      function max(uint[] memory _a) public pure returns (uint) {
-          require(_a.length >= 5);
-          uint m = 0;
-          for (uint i = 0; i < _a.length; ++i)
-              if (_a[i] > m)
-                  m = _a[i];
+    contract Max {
+        function max(uint[] memory _a) public pure returns (uint) {
+            require(_a.length >= 5);
+            uint m = 0;
+            for (uint i = 0; i < _a.length; ++i)
+                if (_a[i] > m)
+                    m = _a[i];
 
-          for (uint i = 0; i < _a.length; ++i)
-              assert(m > _a[i]);
+            for (uint i = 0; i < _a.length; ++i)
+                assert(m > _a[i]);
 
-          return m;
-      }
-  }
+            return m;
+        }
+    }
 
 gives us:
 
@@ -217,10 +228,10 @@ gives us:
 
   Warning: CHC: Assertion violation happens here.
   Counterexample:
-  
+
   _a = [0, 0, 0, 0, 0]
    = 0
-  
+
   Transaction trace:
   Test.constructor()
   Test.max([0, 0, 0, 0, 0])
@@ -245,7 +256,9 @@ below.
 
 .. code-block:: Solidity
 
+    pragma solidity >=0.8.0;
     pragma experimental SMTChecker;
+    // This may report a warning if no SMT solver available.
 
 
     contract Robot {
@@ -290,9 +303,9 @@ robot, even if infinitely many, the invariant can *never* fail. The interested
 reader may want to prove that fact manually as well.  Hint: this invariant is
 inductive.
 
-We can also trick the SMTChecker into giving us a path to a certain position.
-We know that position (2, 4) is reachable, because 2 + 4 = 6 is even. Let us add
-the property that (2, 4) is *not* reachable, by adding the following function.
+We can also trick the SMTChecker into giving us a path to a certain position we
+think might be reachable.  We can add the property that (2, 4) is *not*
+reachable, by adding the following function.
 
 .. code-block:: Solidity
 
@@ -300,7 +313,7 @@ the property that (2, 4) is *not* reachable, by adding the following function.
         assert(!(x == 2 && y == 4));
     }
 
-We know that this property is false, but while proving that the property is false,
+This property is false, and while proving that the property is false,
 the SMTChecker gives us exactly *how* to reach (2, 4):
 
 .. code-block:: bash
@@ -308,7 +321,7 @@ the SMTChecker gives us exactly *how* to reach (2, 4):
   Warning: CHC: Assertion violation happens here.
   Counterexample:
   x = 2, y = 4
-  
+
   Transaction trace:
   Robot.constructor()
   State: x = 0, y = 0
@@ -331,7 +344,7 @@ External Calls and Reentrancy
 =============================
 
 Every external call is treated as a call to unknown code by the SMTChecker.
-The reasoning behind that is, that even if the code of the called contract is
+The reasoning behind that is that even if the code of the called contract is
 available at compile time, there is no guarantee that the deployed contract
 will indeed be the same as the contract where the interface came from at
 compile time.
@@ -342,40 +355,42 @@ anything, including reenter the caller contract.
 
 .. code-block:: Solidity
 
-  pragma experimental SMTChecker;
-  
-  interface Unknown {
-  	function run() external;
-  }
-  
-  contract Mutex {
-  	uint x;
-  	bool lock;
-  
-  	Unknown immutable unknown;
-  
-  	constructor(Unknown _u) {
-  		require(address(_u) != address(0));
-  		unknown = _u;
-  	}
-  
-  	modifier mutex {
-  		require(!lock);
-  		lock = true;
-  		_;
-  		lock = false;
-  	}
-  
-  	function set(uint _x) mutex public {
-  		x = _x;
-  	}
-  
-  	function run() mutex public {
-  		uint xPre = x;
-  		unknown.run();
-  		assert(xPre == x);
-  	}
-  }
+    pragma solidity >=0.8.0;
+    pragma experimental SMTChecker;
+    // This may report a warning if no SMT solver available.
+
+    interface Unknown {
+    	function run() external;
+    }
+
+    contract Mutex {
+    	uint x;
+    	bool lock;
+
+    	Unknown immutable unknown;
+
+    	constructor(Unknown _u) {
+    		require(address(_u) != address(0));
+    		unknown = _u;
+    	}
+
+    	modifier mutex {
+    		require(!lock);
+    		lock = true;
+    		_;
+    		lock = false;
+    	}
+
+    	function set(uint _x) mutex public {
+    		x = _x;
+    	}
+
+    	function run() mutex public {
+    		uint xPre = x;
+    		unknown.run();
+    		assert(xPre == x);
+    	}
+    }
 
 The example above shows a contract that uses a mutex flag to forbid reentrancy.
 The solver is able to infer that when ``unknown.run()`` is called, the contract
@@ -391,7 +406,7 @@ that the assertion fails:
   Warning: CHC: Assertion violation happens here.
   Counterexample:
   x = 1, lock = true, unknown = 1
-  
+
   Transaction trace:
   Mutex.constructor(1)
   State: x = 0, lock = false, unknown = 1
@@ -417,7 +432,7 @@ The SMTChecker uses a hardcoded resource limit (``rlimit``) chosen per solver,
 which is not precisely related to time. We chose the ``rlimit`` option as the default
 because it gives more determinism guarantees than time inside the solver.
 
-This options translates roughly to "a few seconds timeout". Of course many properties
+This options translates roughly to "a few seconds timeout" per query. Of course many properties
 are very complex and need a lot of time to be solved, where determinism does not matter.
 If the SMTChecker does not manage to solve the contract properties with the default ``rlimit``,
 a timeout can be given in milliseconds via the CLI option ``--model-checker-timeout <time>`` or
