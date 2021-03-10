@@ -63,28 +63,12 @@ enum class DiagnosticSeverity {
 	Hint = 4,
 };
 
-enum class DiagnosticTag {
-	Unnecessary = 1, // Unused or unnecessary code.
-	Deprecated = 2   // Deprecated or obsolete code.
-};
-
 /// Represents a related message and source code location for a diagnostic. This should be
 /// used to point to code locations that cause or related to a diagnostics, e.g when duplicating
 /// a symbol in a scope.
 struct DiagnosticRelatedInformation {
 	langutil::SourceLocation location;   // The location of this related diagnostic information.
 	std::string message; // The message of this related diagnostic information.
-};
-
-/// Represents a diagnostic, such as a compiler error or warning. Diagnostic objects are only valid in the scope of a resource.
-struct Diagnostic {
-	LineColumnRange range;                         // The range at which the message applies.
-	std::optional<DiagnosticSeverity> severity;
-	std::optional<unsigned long long> code;        // The diagnostic's code, which might appear in the user interface.
-	std::optional<std::string> source;             // A human-readable string describing the source of this diagnostic, e.g. 'typescript' or 'super lint'.
-	std::string message;                           // The diagnostic's message.
-	std::vector<DiagnosticTag> diagnosticTag;      // Additional metadata about the diagnostic.
-	std::vector<DiagnosticRelatedInformation> relatedInformation; // An array of related diagnostic information, e.g. when symbol-names within a scope collide all definitions can be marked via this property.
 };
 
 }
