@@ -131,6 +131,33 @@ Json::Value toJson(boost::filesystem::path const& _basePath, SourceLocation cons
 	return item;
 }
 
+size_t toOffset(std::string const& _text, langutil::LineColumn _position) noexcept
+{
+	// TODO: take care of Unicode.
+	size_t offset = 0;
+	langutil::LineColumn current = {0, 0};
+	while (current != _position && offset < _text.size())
+	{
+		if (_text.at(offset) != '\n')
+			current.column++;
+		else
+		{
+			current.line++;
+			current.column = 0;
+		}
+		offset++;
+	}
+	return offset;
+}
+
+std::pair<size_t, size_t> offsetsOf(std::string const& _text, LineColumnRange _range) noexcept
+{
+	return std::pair{
+		toOffset(_text, _range.start),
+		toOffset(_text, _range.end)
+	};
+}
+
 } // }}} end helpers
 
 LanguageServer::LanguageServer(Logger _logger, istream& _in, ostream& _out):
@@ -171,35 +198,6 @@ void LanguageServer::changeConfiguration(Json::Value const& _settings)
 					trace("Failed to parse remapping: '"s + element.asString() + "'");
 			}
 		}
-	}
-}
-
-namespace { // TODO: move us up!
-	inline size_t toOffset(std::string const& _text, langutil::LineColumn _position) noexcept
-	{
-		// TODO: take care of Unicode.
-		size_t offset = 0;
-		langutil::LineColumn current = {0, 0};
-		while (current != _position && offset < _text.size())
-		{
-			if (_text.at(offset) != '\n')
-				current.column++;
-			else
-			{
-				current.line++;
-				current.column = 0;
-			}
-			offset++;
-		}
-		return offset;
-	}
-
-	inline std::pair<size_t, size_t> offsetsOf(std::string const& _text, LineColumnRange _range) noexcept
-	{
-		return std::pair{
-			toOffset(_text, _range.start),
-			toOffset(_text, _range.end)
-		};
 	}
 }
 
