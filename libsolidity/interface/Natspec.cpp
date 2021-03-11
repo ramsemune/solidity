@@ -151,21 +151,22 @@ Json::Value Natspec::devDocumentation(ContractDefinition const& _contractDef)
 		if (auto devDoc = devDocumentation(varDecl->annotation().docTags); !devDoc.empty())
 			stateVariables[varDecl->name()] = devDoc;
 
+		auto assignIfNotEmpty = [&](string const& _name, Json::Value const& _content)
+		{
+			if (!_content.empty())
+				stateVariables[varDecl->name()][_name] = _content;
+		};
+
 		Json::Value jsonReturn;
 
 		if (varDecl->annotation().docTags.count("return") == 1)
-			jsonReturn = extractDoc(varDecl->annotation().docTags, "return");
-		else if (FunctionTypePointer functionType = varDecl->functionType(false))
-			jsonReturn = extractReturnParameterDocs(
-					varDecl->annotation().docTags,
-					functionType->returnParameterNames()
-				);
+			assignIfNotEmpty("return", extractDoc(varDecl->annotation().docTags, "return"));
 
-		if (!jsonReturn.empty())
-		{
-			stateVariables[varDecl->name()]["return"] = jsonReturn;
-			stateVariables[varDecl->name()]["returns"] = jsonReturn;
-		}
+		if (FunctionTypePointer functionType = varDecl->functionType(false))
+			assignIfNotEmpty("returns", extractReturnParameterDocs(
+				varDecl->annotation().docTags,
+				functionType->returnParameterNames()
+			));
 	}
 
 	Json::Value events(Json::objectValue);
