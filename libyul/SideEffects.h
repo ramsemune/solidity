@@ -77,10 +77,12 @@ struct SideEffects
 	/// effect on `msize()`.
 	Effect memory = None;
 
+	bool keepsReturndatasize = true;
+
 	/// @returns the worst-case side effects.
 	static SideEffects worst()
 	{
-		return SideEffects{false, false, false, false, false, Write, Write, Write};
+		return SideEffects{false, false, false, false, false, Write, Write, Write, false};
 	}
 
 	/// @returns the combined side effects of two pieces of code.
@@ -94,7 +96,8 @@ struct SideEffects
 			cannotLoop && _other.cannotLoop,
 			otherState + _other.otherState,
 			storage + _other.storage,
-			memory +  _other.memory
+			memory +  _other.memory,
+			keepsReturndatasize && _other.keepsReturndatasize
 		};
 	}
 
@@ -115,7 +118,8 @@ struct SideEffects
 			cannotLoop == _other.cannotLoop &&
 			otherState == _other.otherState &&
 			storage == _other.storage &&
-			memory == _other.memory;
+			memory == _other.memory &&
+			keepsReturndatasize == _other.keepsReturndatasize;
 	}
 };
 

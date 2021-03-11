@@ -85,6 +85,8 @@ struct SemanticInformation
 	static Effect otherState(Instruction _instruction);
 	static bool invalidInPureFunctions(Instruction _instruction);
 	static bool invalidInViewFunctions(Instruction _instruction);
+
+	static bool keepsReturndataSize(Instruction _instruction);
 };
 
 }

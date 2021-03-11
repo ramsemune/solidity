@@ -410,3 +410,19 @@ bool SemanticInformation::invalidInViewFunctions(Instruction _instruction)
 	}
 	return false;
 }
+
+bool SemanticInformation::keepsReturndataSize(Instruction _instruction)
+{
+	switch (_instruction)
+	{
+		case Instruction::CALL:
+		case Instruction::CALLCODE:
+		case Instruction::DELEGATECALL:
+		case Instruction::CREATE:
+		case Instruction::CREATE2:
+		case Instruction::STATICCALL:
+			return false;
+		default:
+			return true;
+	}
+}

@@ -339,6 +339,7 @@ SideEffects EVMDialect::sideEffectsOfInstruction(evmasm::Instruction _instructio
 		translate(evmasm::SemanticInformation::otherState(_instruction)),
 		translate(evmasm::SemanticInformation::storage(_instruction)),
 		translate(evmasm::SemanticInformation::memory(_instruction)),
+		evmasm::SemanticInformation::keepsReturndataSize(_instruction)
 	};
 }
 
