@@ -188,6 +188,18 @@ bool FunctionCallGraphBuilder::visit(MemberAccess const& _memberAccess)
 
 	functionReferenced(*functionDef, _memberAccess.annotation().calledDirectly);
 
+	TypePointer exprType = _memberAccess.expression().annotation().type;
+	ASTString const& memberName = _memberAccess.memberName();
+
+	if (auto magicType = dynamic_cast<MagicType const*>(exprType))
+		if (magicType->kind() == MagicType::Kind::MetaType && (
+			memberName == "creationCode" || memberName == "runtimeCode"
+		))
+		{
+			ContractType const& accessedContractType = dynamic_cast<ContractType const&>(*magicType->typeArgument());
+			m_graph.createdContracts.emplace(&accessedContractType, &_memberAccess);
+		}
+
 	return true;
 }
 
